@@ -1,46 +1,46 @@
 # Spotify Local Files - Discord Rich Presence
 
-Spotify'ın Discord Rich Presence entegrasyonu normalde mükemmel çalışır — şarkı adı, sanatçı, albüm kapağı, zaman çubuğu hepsi görünür. Tek bir sorun var: **local files ile eklenen müziklerde albüm kapağı gösterilmez** ve çoğu zaman sadece "Spotify" yazar.
+Spotify's Discord Rich Presence integration works great for catalog tracks — song name, artist, album art, and playback bar all show up perfectly. There's one problem: **local files don't show album art on Discord**, and often just display "Spotify" with the artist name and nothing else.
 
-Bu araç, Spotify local files çaldığınızda Discord profilinizde albüm kapağını ve tüm track bilgilerini gösterir.
+This tool fixes that by reading cover art directly from your local mp3/flac files and pushing it to Discord.
 
-## Nasıl Çalışıyor
+## How It Works
 
-1. Spotify API üzerinden o an çalan şarkıyı dinler
-2. Local file algılandığında, diskinizdeki mp3/flac dosyasını bulur
-3. Dosyanın embedded cover art'ını okur (`music-metadata`)
-4. Cover art'ı imgbb'ye upload eder ve cache'ler
-5. Discord RPC üzerinden "Listening to [sanatçı]" formatında günceller
+1. Polls the Spotify API for your currently playing track
+2. When a local file is detected, finds the matching file on your disk
+3. Reads the embedded cover art from the file tags (`music-metadata`)
+4. Uploads the cover to imgbb (cached after first upload)
+5. Sets Discord Rich Presence with full track info: artist name, song title, album art, and playback bar
 
-**Normal (Spotify kataloğu) müziklerde hiçbir şey yapmaz** — Discord'un kendi Spotify entegrasyonu çalışmaya devam eder.
+**For non-local (catalog) tracks, it does nothing** — Discord's built-in Spotify integration handles those.
 
-## Kurulum
+## Setup
 
-### Gereksinimler
+### Prerequisites
 
 - [Node.js](https://nodejs.org/) 18+
-- Spotify hesabı
-- Discord hesabı
+- A Spotify account
+- A Discord account
 
-### 1. Spotify App Oluştur
+### 1. Create a Spotify App
 
-1. [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)'a git
-2. "Create app" tıkla
-3. Redirect URI olarak `http://127.0.0.1:3000/callback` ekle
-4. Client ID ve Client Secret'ı not al
+1. Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+2. Click "Create app"
+3. Add `http://127.0.0.1:3000/callback` as the Redirect URI
+4. Note down the Client ID and Client Secret
 
-### 2. Discord Application Oluştur
+### 2. Create a Discord Application
 
-1. [Discord Developer Portal](https://discord.com/developers/applications)'a git
-2. "New Application" tıkla, **ismini "Spotify" koy** (Discord'da "Listening to Spotify" görünmesi için)
-3. General Information'dan **Application ID**'yi not al
-4. Rich Presence > Art Assets'a git, **"spotify-icon"** adında bir görsel yükle (Spotify logosu gibi bir şey)
+1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
+2. Click "New Application" — **name it "Spotify"** (so Discord shows "Listening to Spotify")
+3. Copy the **Application ID** from General Information
+4. Go to Rich Presence > Art Assets and upload an image named **"spotify-icon"** (a Spotify logo or similar)
 
-### 3. imgbb API Key
+### 3. Get an imgbb API Key
 
-1. [imgbb.com/api](https://api.imgbb.com/)'ye git, ücretsiz bir API key al
+1. Go to [imgbb.com/api](https://api.imgbb.com/) and sign up for a free API key
 
-### 4. Proje Kurulumu
+### 4. Install
 
 ```bash
 git clone https://github.com/ShaggyLorean/spotify-local-files-rp.git
@@ -48,7 +48,7 @@ cd spotify-local-files-rp
 npm install
 ```
 
-`.env.example` dosyasını `.env` olarak kopyala ve doldur:
+Copy `.env.example` to `.env` and fill in your credentials:
 
 ```env
 SPOTIFY_CLIENT_ID=your_spotify_client_id
@@ -59,36 +59,48 @@ IMGBB_API_KEY=your_imgbb_api_key
 MUSIC_DIRS=C:\Users\you\Music;D:\Albums
 ```
 
-### 5. Çalıştır
+### 5. Run
 
 ```bash
 npm start
 ```
 
-İlk çalıştırmada tarayıcıda Spotify yetkilendirme sayfası açılır. Sonraki çalıştırmalarda otomatik giriş yapar.
+Or just double-click `start.bat` on Windows.
 
-Windows'ta `start.bat` dosyasına çift tıklayarak da başlatabilirsin.
+On first run, a browser window will open for Spotify authorization. After that, it reconnects automatically.
 
-## Yapılandırma
+## Auto-Start on Windows Boot
 
-| Değişken | Varsayılan | Açıklama |
-|----------|-----------|----------|
-| `DETAILS_FORMAT` | `{track}` | Ana satır (şarkı adı) |
-| `STATE_FORMAT` | `{album}` | Alt satır |
-| `ACTIVITY_NAME_FORMAT` | `{artist}` | "Listening to ..." kısmı |
-| `SHOW_PLAYBACK_BAR` | `true` | Zaman çubuğu gösterilsin mi |
-| `POLL_INTERVAL` | `5000` | Spotify API sorgu aralığı (ms) |
+To have the app start silently in the background when you log in:
 
-Placeholder'lar: `{track}`, `{artist}`, `{album}`
+1. Double-click **`install-startup.bat`** — this adds a startup entry and sets `START_MINIMIZED=true` in your `.env`
+2. The app will now launch silently on every Windows login
 
-Örnekler:
+To remove:
+
+- Double-click **`uninstall-startup.bat`**
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DETAILS_FORMAT` | `{track}` | Main line (song title) |
+| `STATE_FORMAT` | `{album}` | Second line |
+| `ACTIVITY_NAME_FORMAT` | `{artist}` | The "Listening to ..." part |
+| `SHOW_PLAYBACK_BAR` | `true` | Show the playback progress bar |
+| `POLL_INTERVAL` | `5000` | How often to check Spotify (ms) |
+| `START_MINIMIZED` | `false` | Run without a visible console window |
+
+Available placeholders: `{track}`, `{artist}`, `{album}`
+
+Example:
 ```env
 ACTIVITY_NAME_FORMAT={artist}
 DETAILS_FORMAT={track}
 STATE_FORMAT={album}
 ```
 
-## Nasıl Görünür
+## What It Looks Like
 
 ```
 Listening to Playboi Carti
@@ -98,16 +110,16 @@ Listening to Playboi Carti
   🖼️ Album cover art
 ```
 
-## Notlar
+## Notes
 
-- Cover art'lar her müzik için sadece **1 kez** upload edilir, sonrasında `.cover-cache.json` üzerinden cache'lenir
-- Spotify'ın Discord connection'ını **açık bırakabilirsin** — araç sadece local file çaldığında aktif olur
-- Local file'dan normal müziğe geçince otomatik olarak Discord'un native Spotify RP'sine döner
+- Cover art is uploaded **once per track** and cached in `.cover-cache.json` — no repeated uploads
+- You can keep Discord's Spotify connection enabled — this tool only activates for local files
+- Switching from a local file to a catalog track automatically hands back to Discord's native Spotify RP
 
 ## Tech Stack
 
 - TypeScript
-- discord-rpc (IPC)
+- discord-rpc (IPC transport)
 - Spotify Web API
 - music-metadata
 - imgbb API
