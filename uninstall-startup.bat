@@ -10,5 +10,12 @@ if exist "%VBS_FILE%" (
     echo.
     echo  No startup entry found.
 )
+
+cd /d "%~dp0"
+if exist .env (
+    powershell -ExecutionPolicy Bypass -Command "(Get-Content .env) | Where-Object { $_ -notmatch '^START_MINIMIZED=' } | Set-Content .env"
+    echo  START_MINIMIZED removed from .env.
+)
+
 echo.
 pause

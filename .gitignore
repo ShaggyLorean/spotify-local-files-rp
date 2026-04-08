@@ -5,3 +5,4 @@ dist/
 .cover-cache.json
 tsconfig.tsbuildinfo
 nul
+spotify-rp.log

@@ -4,9 +4,17 @@ import { initDiscord, setActivity, clearActivity } from './discord';
 import { buildIndex, findFile, extractCoverArt } from './file-index';
 import { getCachedOrUpload, loadCache } from './cover-art';
 import { SpotifyTrack } from './types';
+import { initTray, setupLogging, killTray } from './tray';
 
 let lastActivityKey = '';
 let wasLocalFile = false;
+
+async function shutdown(): Promise<void> {
+  console.log('Shutting down...');
+  await clearActivity();
+  killTray();
+  process.exit(0);
+}
 
 function activityKey(track: SpotifyTrack, isPlaying: boolean): string {
   return `${track.name}-${track.artists[0]?.name}-${isPlaying}`;
@@ -94,7 +102,8 @@ async function updatePresence(): Promise<void> {
 
     if (imageUrl) {
       activity.largeImageKey = imageUrl;
-      activity.largeImageText = track.album?.name || track.name;
+      const artist = track.artists.map((a) => a.name).join(', ');
+      activity.largeImageText = artist;
     }
 
     activity.smallImageKey = 'spotify-icon';
@@ -108,6 +117,7 @@ async function updatePresence(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  setupLogging();
   console.log('=== Spotify Local Files RP Fixer ===\n');
   validateConfig();
 
@@ -131,17 +141,16 @@ async function main(): Promise<void> {
   console.log('Only local files will trigger custom RP.');
   console.log("Non-local tracks use Spotify's native Discord integration.\n");
 
+  await initTray(shutdown);
+
   setInterval(updatePresence, config.pollInterval);
   await updatePresence();
 }
 
-process.on('SIGINT', async () => {
-  console.log('\nShutting down...');
-  await clearActivity();
-  process.exit(0);
-});
+process.on('SIGINT', shutdown);
 
 main().catch((err) => {
   console.error('Fatal:', err);
+  killTray();
   process.exit(1);
 });
