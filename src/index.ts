@@ -6,18 +6,14 @@ import { getCachedOrUpload, loadCache } from './cover-art';
 import { SpotifyTrack } from './types';
 import { initTray, setupLogging, killTray } from './tray';
 
-let lastActivityKey = '';
 let wasLocalFile = false;
+let polling = false;
 
 async function shutdown(): Promise<void> {
   console.log('Shutting down...');
   await clearActivity();
   killTray();
   process.exit(0);
-}
-
-function activityKey(track: SpotifyTrack, isPlaying: boolean): string {
-  return `${track.name}-${track.artists[0]?.name}-${isPlaying}`;
 }
 
 function formatTrack(format: string, track: SpotifyTrack): string {
@@ -50,6 +46,9 @@ async function resolveCoverArt(track: SpotifyTrack): Promise<string | null> {
 }
 
 async function updatePresence(): Promise<void> {
+  if (polling) return;
+  polling = true;
+
   try {
     const data = await getCurrentlyPlaying();
 
@@ -57,7 +56,6 @@ async function updatePresence(): Promise<void> {
       if (wasLocalFile) {
         await clearActivity();
         wasLocalFile = false;
-        lastActivityKey = '';
         console.log('Playback stopped, cleared custom RP');
       }
       return;
@@ -69,15 +67,11 @@ async function updatePresence(): Promise<void> {
       if (wasLocalFile) {
         await clearActivity();
         wasLocalFile = false;
-        lastActivityKey = '';
         console.log('Switched to non-local track, cleared custom RP');
       }
       return;
     }
 
-    const key = activityKey(track, true);
-    if (key === lastActivityKey) return;
-    lastActivityKey = key;
     wasLocalFile = true;
 
     const artist = track.artists.map((a) => a.name).join(', ');
@@ -102,7 +96,6 @@ async function updatePresence(): Promise<void> {
 
     if (imageUrl) {
       activity.largeImageKey = imageUrl;
-      const artist = track.artists.map((a) => a.name).join(', ');
       activity.largeImageText = artist;
     }
 
@@ -113,6 +106,8 @@ async function updatePresence(): Promise<void> {
     console.log(`  RP updated${imageUrl ? ' with cover art' : ' (no cover art)'}\n`);
   } catch (err: any) {
     console.error('Update error:', err.message);
+  } finally {
+    polling = false;
   }
 }
 
@@ -145,8 +140,10 @@ async function main(): Promise<void> {
 
   await initTray(shutdown);
 
-  setInterval(updatePresence, config.pollInterval);
-  await updatePresence();
+  while (true) {
+    await updatePresence();
+    await new Promise((r) => setTimeout(r, config.pollInterval));
+  }
 }
 
 process.on('SIGINT', shutdown);

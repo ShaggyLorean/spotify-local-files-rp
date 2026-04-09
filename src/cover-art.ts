@@ -26,20 +26,34 @@ function imageHash(data: Buffer): string {
 export async function uploadToImgbb(imageData: Buffer): Promise<string | null> {
   const base64 = imageData.toString('base64');
 
-  const res = await fetch(`https://api.imgbb.com/1/upload?key=${config.imgbbApiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `image=${encodeURIComponent(base64)}`,
-  });
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(`https://api.imgbb.com/1/upload?key=${config.imgbbApiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `image=${encodeURIComponent(base64)}`,
+      });
 
-  if (!res.ok) {
-    const error = await res.text();
-    console.error(`  imgbb upload failed: ${error}`);
-    return null;
+      if (!res.ok) {
+        const error = await res.text();
+        console.error(`  imgbb upload failed (attempt ${attempt}): ${error}`);
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, 2000 * attempt));
+          continue;
+        }
+        return null;
+      }
+
+      const data = await res.json() as any;
+      return data?.data?.display_url || data?.data?.url || null;
+    } catch (err: any) {
+      console.error(`  imgbb upload error (attempt ${attempt}): ${err.message}`);
+      if (attempt < 3) {
+        await new Promise(r => setTimeout(r, 2000 * attempt));
+      }
+    }
   }
-
-  const data = await res.json() as any;
-  return data?.data?.display_url || data?.data?.url || null;
+  return null;
 }
 
 export async function getCachedOrUpload(

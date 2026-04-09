@@ -4,8 +4,10 @@ import { config } from './config';
 
 let client: InstanceType<typeof Client> | null = null;
 let ready = false;
+let destroyed = false;
 
 export async function initDiscord(): Promise<void> {
+  destroyed = false;
   client = new RPC.Client({ transport: 'ipc' }) as InstanceType<typeof Client>;
 
   (client as any).setActivity = (args: any, pid?: number) => {
@@ -69,7 +71,8 @@ export async function initDiscord(): Promise<void> {
   client.on('disconnected', () => {
     console.log('Discord RPC disconnected, reconnecting in 5s...');
     ready = false;
-    setTimeout(reconnect, 5000);
+    client = null;
+    if (!destroyed) setTimeout(reconnect, 5000);
   });
 
   client.on('error', (err: Error) => {
@@ -81,28 +84,27 @@ export async function initDiscord(): Promise<void> {
 }
 
 async function reconnect(): Promise<void> {
+  if (destroyed) return;
   try {
     await initDiscord();
   } catch (err: any) {
     console.error('Reconnect failed:', err.message);
-    setTimeout(reconnect, 10000);
+    if (!destroyed) setTimeout(reconnect, 10000);
   }
 }
 
 export async function setActivity(activity: Record<string, any>): Promise<void> {
-  if (!client) {
-    console.error('setActivity SKIPPED: client is null');
-    return;
-  }
-  if (!ready) {
-    console.error('setActivity SKIPPED: not ready');
+  if (!client || !ready) {
+    console.error('setActivity SKIPPED: Discord not ready, attempting reconnect...');
+    if (!destroyed) setTimeout(reconnect, 2000);
     return;
   }
   try {
-    const result = await client.setActivity(activity as any);
-    console.log('Activity set:', activity.details, '-', activity.state);
+    await client.setActivity(activity as any);
   } catch (err: any) {
     console.error('Failed to set activity:', err.message);
+    ready = false;
+    if (!destroyed) setTimeout(reconnect, 2000);
   }
 }
 
@@ -113,5 +115,14 @@ export async function clearActivity(): Promise<void> {
     console.log('Activity cleared');
   } catch (err: any) {
     console.error('Failed to clear activity:', err.message);
+  }
+}
+
+export function destroyDiscord(): void {
+  destroyed = true;
+  ready = false;
+  if (client) {
+    try { client.destroy(); } catch {}
+    client = null;
   }
 }

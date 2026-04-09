@@ -1,6 +1,7 @@
 import { config } from './config';
 import path from 'path';
 import fs from 'fs';
+import mm from 'music-metadata';
 
 interface MusicFile {
   filePath: string;
@@ -111,12 +112,36 @@ export function findFile(artist: string, title: string): string | null {
 
 export async function extractCoverArt(filePath: string): Promise<Buffer | null> {
   try {
-    const mm = await import('music-metadata');
-    const metadata = await mm.parseFile(filePath);
-    const pictures = metadata.common.picture;
-    if (pictures && pictures.length > 0) {
-      return Buffer.from(pictures[0].data);
+    const metadata = await mm.parseFile(filePath, {
+      skipCovers: false,
+      includeChapters: false,
+    });
+
+    if (metadata.common.picture && metadata.common.picture.length > 0) {
+      const pic = metadata.common.picture[0];
+      console.log(`  Cover found: ${pic.format} ${pic.data.length} bytes from ${path.basename(filePath)}`);
+      return Buffer.from(pic.data);
     }
+
+    const native = metadata.native;
+    for (const fmt of Object.keys(native)) {
+      for (const tag of native[fmt]) {
+        const id = tag.id.toLowerCase();
+        if (id === 'apic' || id === 'cover art (front)' || id === 'metadata_block_picture' || id === 'covr') {
+          const val = tag.value;
+          if (Buffer.isBuffer(val)) {
+            console.log(`  Cover found in native tag [${fmt}]: ${id} ${val.length} bytes`);
+            return val;
+          }
+          if (val && typeof val === 'object' && val.data && Buffer.isBuffer(val.data)) {
+            console.log(`  Cover found in native tag [${fmt}]: ${id} ${val.data.length} bytes`);
+            return Buffer.from(val.data);
+          }
+        }
+      }
+    }
+
+    console.log(`  No cover art in any tag: ${path.basename(filePath)}`);
   } catch (err: any) {
     console.error(`  Error reading ${path.basename(filePath)}: ${err.message}`);
   }
