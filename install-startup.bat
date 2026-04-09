@@ -3,12 +3,10 @@ cd /d "%~dp0"
 
 set STARTUP_DIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
 set VBS_FILE=%STARTUP_DIR%\spotify-local-rp.vbs
-set BAT_DIR=%~dp0
-set BAT_DIR=%BAT_DIR:~0,-1%
+set RUN_HIDDEN=%~dp0run-hidden.vbs
 
 echo Set ws = CreateObject("WScript.Shell") > "%VBS_FILE%"
-echo ws.CurrentDirectory = "%BAT_DIR%" >> "%VBS_FILE%"
-echo ws.Run "cmd /c npm start", 0, False >> "%VBS_FILE%"
+echo ws.Run "wscript ""%RUN_HIDDEN%""", 0, False >> "%VBS_FILE%"
 
 findstr /b "START_MINIMIZED" .env >nul 2>&1
 if %errorlevel% neq 0 (

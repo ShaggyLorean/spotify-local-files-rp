@@ -125,12 +125,14 @@ async function main(): Promise<void> {
   buildIndex();
 
   console.log('Connecting to Discord...');
-  try {
-    await initDiscord();
-  } catch (err: any) {
-    console.error('Discord connection failed:', err.message);
-    console.error('Make sure Discord is running.');
-    process.exit(1);
+  while (true) {
+    try {
+      await initDiscord();
+      break;
+    } catch (err: any) {
+      console.error(`Discord connection failed: ${err.message}. Retrying in 10s...`);
+      await new Promise((r) => setTimeout(r, 10000));
+    }
   }
 
   console.log('\nAuthenticating with Spotify...');
