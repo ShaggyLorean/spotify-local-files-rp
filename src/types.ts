@@ -27,5 +27,5 @@ export interface CurrentlyPlaying {
 }
 
 export interface CoverCache {
-  [key: string]: { url: string; updatedAt: number };
+  [key: string]: { url: string; hash?: string; updatedAt: number };
 }

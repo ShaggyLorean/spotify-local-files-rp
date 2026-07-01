@@ -9,6 +9,43 @@ const TOKEN_URL = 'https://accounts.spotify.com/api/token';
 const API_BASE = 'https://api.spotify.com/v1';
 const AUTH_URL = 'https://accounts.spotify.com/authorize';
 const SCOPES = 'user-read-currently-playing user-read-playback-state';
+const MAX_SPOTIFY_RETRIES = 3;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryAfterMs(res: Response): number {
+  const retryAfter = res.headers.get('retry-after');
+  if (!retryAfter) return 5000;
+
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds)) return Math.max(seconds * 1000, 1000);
+
+  const dateMs = Date.parse(retryAfter);
+  if (Number.isFinite(dateMs)) return Math.max(dateMs - Date.now(), 1000);
+
+  return 5000;
+}
+
+async function readResponseBody(res: Response): Promise<string> {
+  try {
+    return await res.text();
+  } catch {
+    return '';
+  }
+}
+
+async function readJsonResponse<T>(res: Response, context: string): Promise<T> {
+  const body = await readResponseBody(res);
+  if (!body) return null as T;
+
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    throw new Error(`${context} returned invalid JSON (HTTP ${res.status}): ${body.slice(0, 200)}`);
+  }
+}
 
 function loadTokens(): SpotifyTokens | null {
   try {
@@ -95,7 +132,7 @@ function performOAuthFlow(): Promise<SpotifyTokens> {
     let server: http.Server;
     let resolved = false;
 
-    app.get('/callback', async (req, res) => {
+    app.get(config.spotifyRedirectPath, async (req, res) => {
       const code = req.query.code as string;
       if (!code) {
         res.send('<h1>Error</h1><p>No authorization code received.</p>');
@@ -114,11 +151,20 @@ function performOAuthFlow(): Promise<SpotifyTokens> {
       }
     });
 
-    server = app.listen(config.port, () => {
+    server = app.listen(config.port, '127.0.0.1', () => {
       const authUrl = `${AUTH_URL}?client_id=${config.spotifyClientId}&response_type=code&redirect_uri=${encodeURIComponent(config.spotifyRedirectUri)}&scope=${encodeURIComponent(SCOPES)}`;
       console.log('\nOpening browser for Spotify authentication...');
       console.log(`If it doesn't open, visit:\n${authUrl}\n`);
       openBrowser(authUrl);
+    });
+
+    server.once('error', (err: NodeJS.ErrnoException) => {
+      if (resolved) return;
+      resolved = true;
+      const message = err.code === 'EADDRINUSE'
+        ? `OAuth callback port ${config.port} is already in use. Close the process using it or change SPOTIFY_REDIRECT_URI to another registered localhost callback.`
+        : `OAuth callback server failed: ${err.message}`;
+      reject(new Error(message));
     });
 
     setTimeout(() => {
@@ -157,24 +203,59 @@ async function getValidToken(): Promise<string> {
   return currentTokens.access_token;
 }
 
-async function spotifyFetch(endpoint: string): Promise<any> {
+async function spotifyFetch(endpoint: string, attempt = 1): Promise<any> {
   const token = await getValidToken();
-  const res = await fetch(`${API_BASE}${endpoint}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  let res: Response;
+
+  try {
+    res = await fetch(`${API_BASE}${endpoint}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch (err: any) {
+    if (attempt < MAX_SPOTIFY_RETRIES) {
+      const waitMs = 1000 * attempt;
+      console.error(`Spotify request failed: ${err.message}. Retrying in ${waitMs}ms...`);
+      await sleep(waitMs);
+      return spotifyFetch(endpoint, attempt + 1);
+    }
+    throw new Error(`Spotify request failed: ${err.message}`);
+  }
 
   if (res.status === 204) return null;
   if (res.status === 401) {
+    if (attempt >= MAX_SPOTIFY_RETRIES) {
+      const error = await readResponseBody(res);
+      throw new Error(`Spotify auth failed after token refresh: ${error || res.statusText}`);
+    }
+
     currentTokens = await refreshAccessToken(currentTokens!.refresh_token);
     saveTokens(currentTokens);
-    const retry = await fetch(`${API_BASE}${endpoint}`, {
-      headers: { Authorization: `Bearer ${currentTokens.access_token}` },
-    });
-    if (retry.status === 204) return null;
-    return retry.json();
+    return spotifyFetch(endpoint, attempt + 1);
   }
 
-  return res.json();
+  if (res.status === 429) {
+    const waitMs = retryAfterMs(res);
+    if (attempt < MAX_SPOTIFY_RETRIES) {
+      console.error(`Spotify rate limited. Retrying in ${Math.ceil(waitMs / 1000)}s...`);
+      await sleep(waitMs);
+      return spotifyFetch(endpoint, attempt + 1);
+    }
+    throw new Error(`Spotify rate limited after ${attempt} attempts`);
+  }
+
+  if (res.status >= 500 && attempt < MAX_SPOTIFY_RETRIES) {
+    const waitMs = 1000 * attempt;
+    console.error(`Spotify API HTTP ${res.status}. Retrying in ${waitMs}ms...`);
+    await sleep(waitMs);
+    return spotifyFetch(endpoint, attempt + 1);
+  }
+
+  if (!res.ok) {
+    const error = await readResponseBody(res);
+    throw new Error(`Spotify API HTTP ${res.status}: ${error || res.statusText}`);
+  }
+
+  return readJsonResponse(res, 'Spotify API');
 }
 
 export async function getCurrentlyPlaying(): Promise<CurrentlyPlaying | null> {

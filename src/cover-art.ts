@@ -4,6 +4,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 
 let cache: CoverCache = {};
+let warnedMissingImgbbKey = false;
 
 export function loadCache(): void {
   try {
@@ -24,6 +25,14 @@ function imageHash(data: Buffer): string {
 }
 
 export async function uploadToImgbb(imageData: Buffer): Promise<string | null> {
+  if (!config.imgbbApiKey) {
+    if (!warnedMissingImgbbKey) {
+      console.warn('  IMGBB_API_KEY is not configured; cover art upload is disabled.');
+      warnedMissingImgbbKey = true;
+    }
+    return null;
+  }
+
   const base64 = imageData.toString('base64');
 
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -63,14 +72,18 @@ export async function getCachedOrUpload(
   const hash = imageHash(imageData);
   const cached = cache[key];
 
-  if (cached && cached.updatedAt > Date.now() - 30 * 24 * 60 * 60 * 1000) {
+  if (
+    cached &&
+    cached.hash === hash &&
+    cached.updatedAt > Date.now() - 30 * 24 * 60 * 60 * 1000
+  ) {
     return cached.url;
   }
 
   console.log(`  Uploading cover art to imgbb...`);
   const url = await uploadToImgbb(imageData);
   if (url) {
-    cache[key] = { url, updatedAt: Date.now() };
+    cache[key] = { url, hash, updatedAt: Date.now() };
     saveCache();
   }
   return url;

@@ -8,6 +8,7 @@ import { initTray, setupLogging, killTray } from './tray';
 
 let wasLocalFile = false;
 let polling = false;
+const resolvedCoverUrls = new Map<string, string | null>();
 
 async function shutdown(): Promise<void> {
   console.log('Shutting down...');
@@ -28,21 +29,30 @@ function formatTrack(format: string, track: SpotifyTrack): string {
 async function resolveCoverArt(track: SpotifyTrack): Promise<string | null> {
   const artist = track.artists[0]?.name || '';
   const title = track.name;
+  const trackKey = track.uri || `${artist}::${title}`;
+
+  if (resolvedCoverUrls.has(trackKey)) {
+    return resolvedCoverUrls.get(trackKey) || null;
+  }
 
   const filePath = findFile(artist, title);
   if (!filePath) {
     console.log(`  File not found in index: ${artist} - ${title}`);
+    resolvedCoverUrls.set(trackKey, null);
     return null;
   }
 
   const coverBuffer = await extractCoverArt(filePath);
   if (!coverBuffer) {
     console.log(`  No embedded cover art: ${filePath}`);
+    resolvedCoverUrls.set(trackKey, null);
     return null;
   }
 
   const cacheKey = `${artist}::${title}`;
-  return getCachedOrUpload(cacheKey, coverBuffer);
+  const imageUrl = await getCachedOrUpload(cacheKey, coverBuffer);
+  resolvedCoverUrls.set(trackKey, imageUrl);
+  return imageUrl;
 }
 
 async function updatePresence(): Promise<void> {
@@ -117,7 +127,7 @@ async function main(): Promise<void> {
   validateConfig();
 
   loadCache();
-  buildIndex();
+  await buildIndex();
 
   console.log('Connecting to Discord...');
   while (true) {

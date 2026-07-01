@@ -1,13 +1,12 @@
 import { config } from './config';
 import path from 'path';
 import fs from 'fs';
-import mm from 'music-metadata';
+import * as mm from 'music-metadata';
 
 interface MusicFile {
   filePath: string;
   artist: string;
   title: string;
-  normalKey: string;
 }
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.ogg', '.m4a', '.wav', '.aac', '.wma', '.opus']);
@@ -15,11 +14,70 @@ const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.ogg', '.m4a', '.wav', '.aac
 let index: Map<string, MusicFile[]> = new Map();
 
 function normalize(str: string): string {
-  return str.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return str
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}]/gu, '');
 }
 
 function makeKey(artist: string, title: string): string {
   return `${normalize(artist)}::${normalize(title)}`;
+}
+
+function hasBufferData(value: unknown): value is { data: Buffer | Uint8Array } {
+  if (!value || typeof value !== 'object' || !('data' in value)) return false;
+  const data = (value as { data?: unknown }).data;
+  return Buffer.isBuffer(data) || data instanceof Uint8Array;
+}
+
+function parseNameFallback(filePath: string): Pick<MusicFile, 'artist' | 'title'> {
+  const basename = path.basename(filePath, path.extname(filePath));
+  const parts = basename.split(/\s*[-–—]\s*/);
+
+  if (parts.length >= 2) {
+    return {
+      artist: parts[0].trim(),
+      title: parts.slice(1).join(' - ').trim(),
+    };
+  }
+
+  return { artist: '', title: basename.trim() };
+}
+
+async function readMetadataTags(filePath: string): Promise<Pick<MusicFile, 'artist' | 'title'> | null> {
+  try {
+    const metadata = await mm.parseFile(filePath, {
+      skipCovers: true,
+      includeChapters: false,
+    });
+
+    const title = metadata.common.title?.trim();
+    const artist = (
+      metadata.common.artist ||
+      metadata.common.artists?.join(', ') ||
+      metadata.common.albumartist ||
+      ''
+    ).trim();
+
+    if (title) return { artist, title };
+  } catch (err: any) {
+    console.warn(`  Metadata index failed for ${path.basename(filePath)}: ${err.message}`);
+  }
+
+  return null;
+}
+
+function addEntry(entry: MusicFile): void {
+  const key = makeKey(entry.artist, entry.title);
+  if (!index.has(key)) index.set(key, []);
+  index.get(key)!.push(entry);
+
+  if (entry.title) {
+    const titleOnlyKey = makeKey('', entry.title);
+    if (!index.has(titleOnlyKey)) index.set(titleOnlyKey, []);
+    index.get(titleOnlyKey)!.push(entry);
+  }
 }
 
 function scanDir(dir: string): string[] {
@@ -46,7 +104,7 @@ function scanDir(dir: string): string[] {
   return results;
 }
 
-export function buildIndex(): void {
+export async function buildIndex(): Promise<void> {
   console.log('Scanning music directories...');
   index.clear();
 
@@ -59,29 +117,18 @@ export function buildIndex(): void {
   console.log(`  Found ${allFiles.length} audio files`);
 
   for (const filePath of allFiles) {
-    const basename = path.basename(filePath, path.extname(filePath));
-    const parts = basename.split(/\s*[-–—]\s*/);
+    const fallback = parseNameFallback(filePath);
+    const metadataTags = await readMetadataTags(filePath);
+    const primary = metadataTags || fallback;
 
-    let artist = '';
-    let title = '';
+    addEntry({ filePath, artist: primary.artist, title: primary.title });
 
-    if (parts.length >= 2) {
-      artist = parts[0].trim();
-      title = parts.slice(1).join(' - ').trim();
-    } else {
-      title = basename.trim();
-    }
-
-    const key = makeKey(artist, title);
-    const entry: MusicFile = { filePath, artist, title, normalKey: key };
-
-    if (!index.has(key)) index.set(key, []);
-    index.get(key)!.push(entry);
-
-    if (artist && title) {
-      const titleOnlyKey = makeKey('', title);
-      if (!index.has(titleOnlyKey)) index.set(titleOnlyKey, []);
-      index.get(titleOnlyKey)!.push(entry);
+    if (
+      metadataTags &&
+      (normalize(metadataTags.artist) !== normalize(fallback.artist) ||
+        normalize(metadataTags.title) !== normalize(fallback.title))
+    ) {
+      addEntry({ filePath, artist: fallback.artist, title: fallback.title });
     }
   }
 
@@ -93,15 +140,26 @@ export function findFile(artist: string, title: string): string | null {
   const candidates = index.get(exactKey);
   if (candidates?.length) return candidates[0].filePath;
 
-  const titleOnlyKey = makeKey('', title);
-  const titleCandidates = index.get(titleOnlyKey);
-  if (titleCandidates?.length) return titleCandidates[0].filePath;
-
   const normArtist = normalize(artist);
   const normTitle = normalize(title);
+  if (!normTitle) return null;
+
+  const titleOnlyKey = makeKey('', title);
+  const titleCandidates = index.get(titleOnlyKey);
+  if (titleCandidates?.length) {
+    const artistMatch = titleCandidates.find((entry) => {
+      const indexedArtist = normalize(entry.artist);
+      return !!normArtist && !!indexedArtist && (indexedArtist.includes(normArtist) || normArtist.includes(indexedArtist));
+    });
+    return (artistMatch || titleCandidates[0]).filePath;
+  }
+
   for (const [key, entries] of index) {
-    if (key.includes(normTitle) || normTitle.includes(key.split('::')[1])) {
-      if (!normArtist || key.includes(normArtist)) {
+    const [indexedArtist, indexedTitle] = key.split('::');
+    if (!indexedTitle) continue;
+
+    if (indexedTitle.includes(normTitle) || normTitle.includes(indexedTitle)) {
+      if (!normArtist || indexedArtist.includes(normArtist)) {
         return entries[0].filePath;
       }
     }
@@ -133,7 +191,7 @@ export async function extractCoverArt(filePath: string): Promise<Buffer | null> 
             console.log(`  Cover found in native tag [${fmt}]: ${id} ${val.length} bytes`);
             return val;
           }
-          if (val && typeof val === 'object' && val.data && Buffer.isBuffer(val.data)) {
+          if (hasBufferData(val)) {
             console.log(`  Cover found in native tag [${fmt}]: ${id} ${val.data.length} bytes`);
             return Buffer.from(val.data);
           }

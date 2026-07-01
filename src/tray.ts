@@ -94,6 +94,7 @@ export async function initTray(onExit: () => void): Promise<void> {
 
 const origLog = console.log;
 const origError = console.error;
+const origWarn = console.warn;
 
 function appendLog(level: string, ...args: any[]) {
   const ts = new Date().toISOString().substring(11, 19);
@@ -107,6 +108,7 @@ export function setupLogging(): void {
     else writeFileSync(logPath, '');
   } catch {}
   console.log = (...args: any[]) => { origLog(...args); appendLog('INFO', ...args); };
+  console.warn = (...args: any[]) => { origWarn(...args); appendLog('WARN', ...args); };
   console.error = (...args: any[]) => { origError(...args); appendLog('ERROR', ...args); };
 }
 
